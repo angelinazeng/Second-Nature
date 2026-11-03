@@ -11,7 +11,9 @@ type CommunityView = 'feed' | 'ask' | 'question' | 'story'
 function App() {
   const [tab, setTab] = useState<Tab>('snap')
   const [scanState, setScanState] = useState<ScanState>('idle')
-  const [scanItem, setScanItem] = useState<ScanKey>('pizza')
+  const [scanItem, setScanItem] = useState<ScanKey>('cardboard')
+  const [confidence, setConfidence] = useState(0)
+  const [scanError, setScanError] = useState('')
   const [photo, setPhoto] = useState('')
   const [city, setCity] = useState('Portland, OR')
   const [household, setHousehold] = useState('The Rivera household')
@@ -56,25 +58,27 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function startScan(item: ScanKey | 'mystery') {
-    setPhoto('')
-    setScanState('scanning')
-    window.setTimeout(() => {
-      if (item === 'mystery') setScanState('unsure')
-      else {
-        setScanItem(item)
-        setScanState('resolved')
-      }
-    }, 900)
-  }
-
-  function uploadScan(event: ChangeEvent<HTMLInputElement>) {
+  async function uploadScan(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
+    event.target.value = ''
     if (!file) return
     if (photo) URL.revokeObjectURL(photo)
     setPhoto(URL.createObjectURL(file))
+    setScanError('')
     setScanState('scanning')
-    window.setTimeout(() => setScanState('resolved'), 900)
+    try {
+      const body = new FormData()
+      body.append('image', file)
+      const response = await fetch('/api/classify', { body, method: 'POST' })
+      if (!response.ok) throw new Error('classify failed')
+      const data: { confident: boolean; label: ScanKey; confidence: number } = await response.json()
+      setScanItem(data.label)
+      setConfidence(data.confidence)
+      setScanState(data.confident ? 'resolved' : 'unsure')
+    } catch {
+      setScanError("We couldn't check that photo. Make sure the app server is running, then try again.")
+      setScanState('idle')
+    }
   }
 
   function saveCurrentItem() {
@@ -139,26 +143,20 @@ function App() {
               <i className="frame-corner frame-c" />
               <i className="frame-corner frame-d" />
               {scanState === 'scanning' && <span className="scanner-beam" />}
-              {scanState === 'idle' && <span className="camera-hint">Center the item in the frame</span>}
+              {scanState === 'idle' && !photo && <span className="camera-hint">Center the item in the frame</span>}
               {scanState === 'scanning' && <span className="camera-hint">Checking local rules…</span>}
             </div>
+            {scanError && <p className="scan-error" role="alert">{scanError}</p>}
             <input accept="image/*" capture="environment" onChange={uploadScan} ref={scanInput} type="file" />
             <button className="primary-action snap-action" onClick={() => scanInput.current?.click()} type="button">
               <Icon name="camera" size={21} />
-              {scanState === 'idle' ? 'Snap or choose a photo' : 'Photograph another item'}
+              {scanState === 'idle' && !photo ? 'Snap or choose a photo' : 'Photograph another item'}
             </button>
-            <div className="demo-items">
-              <span>Try a sample</span>
-              <button onClick={() => startScan('pizza')} type="button">Pizza box</button>
-              <button onClick={() => startScan('bag')} type="button">Plastic bag</button>
-              <button onClick={() => startScan('cup')} type="button">Coffee cup</button>
-              <button onClick={() => startScan('mystery')} type="button">Tricky item</button>
-            </div>
           </section>
 
           {scanState === 'resolved' && (
             <section className="answer-card" aria-live="polite">
-              <div className="answer-status"><Icon name="check" size={16} /> Confident match</div>
+              <div className="answer-status"><Icon name="check" size={16} /> Confident match · {Math.round(confidence * 100)}%</div>
               <p className="identified-item">{result.name}</p>
               <div className={`bin-result ${result.color}`}>
                 <span><Icon name="recycle" size={27} /></span>
@@ -183,8 +181,8 @@ function App() {
             <section className="answer-card unsure-card" aria-live="polite">
               <span className="unsure-mark">?</span>
               <h2>We’re not totally sure.</h2>
-              <p>This looks like a mixed-material package. Local rules can vary, so a neighbor or waste expert may know best.</p>
-              <div className="possible-tags"><span>Mixed material</span><span>Packaging</span></div>
+              <p>Our best guess is {catalog[scanItem].name.toLowerCase()} ({Math.round(confidence * 100)}% sure), which isn’t enough to sort it with confidence. A neighbor or waste expert may know best.</p>
+              <div className="possible-tags"><span>{catalog[scanItem].name}</span></div>
               <button className="primary-action" onClick={openAsk} type="button">
                 <Icon name="community" size={19} /> Ask the community
               </button>
@@ -296,7 +294,7 @@ function App() {
                     className={replySaved ? 'active' : ''}
                     onClick={() => {
                       setReplySaved(true)
-                      setSavedItems((current) => current.includes('cup') ? current : [...current, 'cup'])
+                      setSavedItems((current) => current.includes('trash') ? current : [...current, 'trash'])
                     }}
                     type="button"
                   >

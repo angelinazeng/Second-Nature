@@ -1,0 +1,14 @@
+{
+  "val_accuracy": 0.9007936507936508,
+  "test_accuracy": 0.87890625,
+  "classes": [
+    "cardboard",
+    "glass",
+    "metal",
+    "paper",
+    "plastic",
+    "trash"
+  ],
+  "train_size": 2019,
+  "test_size": 256
+}

@@ -607,3 +607,12 @@ legend { font-size: 11px; font-weight: 700; margin-bottom: 8px; }
   html { scroll-behavior: auto; }
   .scanner-beam { animation: none; top: 50%; }
 }
+
+.scan-error {
+  background: #f7dccf;
+  border-radius: 12px;
+  color: #8a3a1c;
+  font-size: 13px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+}

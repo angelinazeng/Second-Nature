@@ -1,6 +1,16 @@
 import { ScanKey } from '../data/catalog'
 
-function ItemDrawing({ item = 'pizza' }: { item?: ScanKey | 'mystery' }) {
+const drawingFor: Record<ScanKey, 'pizza' | 'bag' | 'cup'> = {
+  cardboard: 'pizza',
+  paper: 'pizza',
+  plastic: 'bag',
+  glass: 'cup',
+  metal: 'cup',
+  trash: 'cup',
+}
+
+function ItemDrawing({ item: requested = 'cardboard' }: { item?: ScanKey | 'mystery' }) {
+  const item = requested === 'mystery' ? requested : drawingFor[requested]
   if (item === 'bag') {
     return (
       <svg className="item-drawing bag-drawing" viewBox="0 0 240 220">
