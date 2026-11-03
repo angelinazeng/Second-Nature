@@ -11,25 +11,66 @@ paper, plastic, trash), returns the item, the bin, and a "why" explanation. If t
 prediction is under 80% confident, the app shows the "not totally sure" state that leads to
 Task 2 (Ask the community).
 
+## Requirements
+
+- Python 3.10+
+- Node 20.19+ or 22.12+
+
 ## Run it
 
-Requires Node 20.19+ or 22.12+ and Python 3.10+.
+You need two terminals: one for the backend, one for the frontend.
+
+### 1. Backend (terminal 1)
 
 ```
-# 1. Backend
 cd backend
 pip install -r requirements.txt
-# Train the model (downloads nothing automatically; get the dataset first):
-curl -L -o /tmp/resized.zip https://huggingface.co/datasets/garythung/trashnet/resolve/main/dataset-resized.zip
-unzip /tmp/resized.zip -d /tmp/trashnet
-python ml/train.py --data /tmp/trashnet/dataset-resized
-uvicorn app.main:app --port 8000
+```
 
-# 2. Frontend (separate terminal)
+The trained model (`backend/models/classifier.pt`) is not stored in git, so train it once
+(about 10-15 minutes on a CPU). Download the dataset, then train:
+
+```
+curl -L -o trashnet.zip https://huggingface.co/datasets/garythung/trashnet/resolve/main/dataset-resized.zip
+python -c "import zipfile; zipfile.ZipFile('trashnet.zip').extractall('trashnet')"
+python ml/train.py --data trashnet/dataset-resized
+```
+
+This prints validation accuracy per epoch and a final test accuracy (about 88%), and writes
+`models/classifier.pt` and `models/metrics.json`. Then start the API:
+
+```
+python -m uvicorn app.main:app --port 8000
+```
+
+Wait for "Application startup complete". Check it with http://localhost:8000/api/health.
+
+### 2. Frontend (terminal 2)
+
+```
 cd frontend
 npm install
 npm run dev
 ```
 
-The app runs at http://localhost:8443 and proxies `/api` to the backend on port 8000.
-Training writes `backend/models/classifier.pt` (git-ignored) and `metrics.json`.
+Open http://localhost:8443. The dev server proxies `/api` to the backend on port 8000, so
+the backend must be running for photos to be classified. The app is laid out for a phone, so
+use your browser's device toolbar (F12) or a narrow window.
+
+For a production build, run `npm run build` in `frontend/`.
+
+## Try it
+
+Click **Snap or choose a photo** and pick a photo of a bottle, can, cardboard, or paper.
+Photos from the TrashNet folders you downloaded work well. A blurry or unrelated image should
+show the "We're not totally sure" screen. Stop the backend and upload again to see the error
+message.
+
+## Notes
+
+- The model only knows the six TrashNet classes and was trained on clean, single-item photos,
+  so accuracy on cluttered real-world photos will be lower.
+- Bin names and "why" text are generic (`backend/app/guidance.py`, mirrored in
+  `frontend/src/data/catalog.ts`). The city field is a label and does not change the answer yet.
+- The confidence cutoff is `CONFIDENCE_THRESHOLD` in `backend/app/main.py`.
+- On WSL, if `localhost:8443` does not load from Windows, use the IP from `hostname -I`.
