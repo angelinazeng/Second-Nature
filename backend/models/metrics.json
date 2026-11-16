@@ -1,6 +1,6 @@
 {
-  "val_accuracy": 0.9007936507936508,
-  "test_accuracy": 0.87890625,
+  "val_accuracy": 0.9166666666666666,
+  "test_accuracy": 0.90625,
   "classes": [
     "cardboard",
     "glass",

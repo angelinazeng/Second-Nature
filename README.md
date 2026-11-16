@@ -11,6 +11,36 @@ paper, plastic, trash), returns the item, the bin, and a "why" explanation. If t
 prediction is under 80% confident, the app shows the "not totally sure" state that leads to
 Task 2 (Ask the community).
 
+## Task 2: Resolve an item the app can't settle
+
+- When a scan isn't confident, **Ask the community** opens a question with the scan photo and the
+  model's best guess already filled in. Questions can also be started from the Community tab
+  (**Ask a sorting question**), with a photo picked there.
+- Posting saves the question to the backend. Three neighbor replies (one waste educator, two
+  neighbors) arrive about 3, 7 and 12 seconds later. They are hard-coded in
+  `backend/app/neighbor_replies.py`, picked by the "What do you think it is?" answer, and they
+  disagree a little on purpose so there is something to compare.
+- The question page has a **Compare answers** card that groups replies by the bin they suggest,
+  with reply and helpful counts. Replies can be sorted by most helpful or newest, marked helpful,
+  and answered.
+- **Save to My Guide** on a reply adds that item and the reply text (as a household tip) to
+  My Guide, and marks the question resolved. The Community feed lists questions with their status
+  (waiting, replies to compare, resolved). The **Questions** filter shows only questions.
+
+## Task 3: Build a household guide and teach others
+
+- **My Guide** collects saved answers (from a scan, or "Save to My Guide" on a community answer).
+  It stays saved in the browser after a reload. Items are grouped by bin. Tap one to see why it goes
+  there, add a household tip, remove it, or **Teach others** (opens a tip post for that item).
+  **Review gaps** lists the materials that aren't in the guide yet.
+- **Share guide with family** saves the guide to the backend and copies a link (`/?guide=<id>`).
+  The link always shows the latest version. Anyone who opens it sees a read-only guide and can
+  add those items to their own guide.
+- **Community** shows stories and item tips from the backend. Posts can have a photo and an
+  attached guide that readers can open. People can mark posts helpful and reply.
+- Guides, posts and replies are stored in SQLite at `backend/data/second_nature.db`, which is
+  created on first run and not committed. These endpoints work without the trained model.
+
 ## Requirements
 
 - Python 3.10+
@@ -32,6 +62,13 @@ The trained model (`backend/models/classifier.pt`) is not stored in git, so trai
 
 ```
 curl -L -o trashnet.zip https://huggingface.co/datasets/garythung/trashnet/resolve/main/dataset-resized.zip
+python -c "import zipfile; zipfile.ZipFile('trashnet.zip').extractall('trashnet')"
+python ml/train.py --data trashnet/dataset-resized
+```
+
+If there is an error, use these commands to download, then train:
+```
+curl.exe -L -o trashnet.zip https://huggingface.co/datasets/garythung/trashnet/resolve/main/dataset-resized.zip
 python -c "import zipfile; zipfile.ZipFile('trashnet.zip').extractall('trashnet')"
 python ml/train.py --data trashnet/dataset-resized
 ```

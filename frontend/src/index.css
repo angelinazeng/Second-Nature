@@ -616,3 +616,85 @@ legend { font-size: 11px; font-weight: 700; margin-bottom: 8px; }
   margin: 12px 0 0;
   padding: 10px 12px;
 }
+
+/* ---- Task 3: household guide + teaching others ---- */
+.saved-group { display: grid; gap: 8px; }
+.saved-group + .saved-group { margin-top: 8px; }
+.list-heading span { background: var(--cream); border-radius: 99px; margin-left: 4px; padding: 1px 6px; }
+.saved-item { display: block; padding: 0; }
+.saved-item.open { border-color: var(--leaf); }
+.saved-item-row { align-items: center; background: transparent; border: 0; display: flex; gap: 11px; padding: 9px; text-align: left; width: 100%; }
+button.saved-item-row { cursor: pointer; }
+.saved-item-row > div { flex: 1; min-width: 0; }
+.saved-item-row > .icon:last-child { transition: rotate .15s; }
+.saved-item.open .saved-item-row > .icon:last-child { rotate: 90deg; }
+.saved-item-detail { border-top: 1px solid var(--line); padding: 12px; }
+.saved-item-detail > p { color: var(--muted); font-size: 11px; line-height: 1.5; margin-bottom: 12px; }
+.saved-item-detail label { display: grid; font-size: 11px; font-weight: 700; gap: 6px; }
+.saved-item-actions { display: grid; gap: 7px; grid-template-columns: 1fr auto; margin-top: 10px; }
+.saved-item-actions button {
+  align-items: center; background: var(--lime); border: 1px solid var(--ink); cursor: pointer; display: flex;
+  font-size: 11px; font-weight: 700; gap: 6px; justify-content: center; padding: 9px 12px;
+}
+.saved-item-actions button.danger { background: transparent; border-color: var(--line); color: #8a3a1c; }
+.shared-tip { align-items: flex-start; border-top: 1px solid var(--line); display: flex; font-size: 11px; gap: 6px; line-height: 1.45; margin: 0; padding: 10px 12px; }
+.shared-tip .icon { flex: 0 0 auto; margin-top: 1px; }
+.guide-why { background: var(--white); border-left: 3px solid var(--leaf); font-size: 12px; line-height: 1.5; margin: 0 0 16px; padding: 12px 14px; }
+.guide-why small { color: var(--muted); display: block; font-size: 9px; font-weight: 700; margin-bottom: 4px; text-transform: uppercase; }
+.error-toast { background: #f7dccf; border-color: #8a3a1c; color: #8a3a1c; }
+.loading-note { color: var(--muted); font-size: 12px; padding: 12px 3px; }
+.link-button { background: transparent; border: 0; color: inherit; cursor: pointer; font-weight: 700; padding: 0; text-decoration: underline; }
+.feed-filter { display: flex; gap: 4px; }
+.feed-filter button { border: 1px solid transparent; border-radius: 99px; color: var(--muted); cursor: pointer; padding: 3px 9px; }
+.feed-filter button.active { background: var(--lime); border-color: var(--ink); color: var(--ink); }
+.tip-item { align-items: center; display: flex; font-size: 11px; gap: 7px; margin-top: 13px; padding: 8px 10px; }
+.tip-item.green { background: #dce9bf; }
+.tip-item.yellow { background: #f3dfa2; }
+.tip-item.orange { background: #edc1aa; }
+.attachment-button { background: transparent; border: 0; cursor: pointer; display: block; padding: 0; text-align: left; width: 100%; }
+.attachment-button:hover .guide-attachment { border-color: var(--leaf); }
+.story-stats button { align-items: center; background: transparent; border: 0; color: inherit; cursor: pointer; display: flex; font-size: inherit; gap: 4px; padding: 0; }
+.story-stats button.liked { color: var(--orange); font-weight: 700; }
+.inline-error { color: #8a3a1c; font-size: 10px; margin: 6px 0 0; }
+.field-hint { color: var(--muted); display: block; font-size: 10px; margin-top: 7px; }
+button:disabled { cursor: not-allowed; opacity: .55; }
+
+/* ---- Task 2: ask the community, compare replies, save an answer ---- */
+.question-photo.has-photo { background: var(--ink); }
+.question-photo img { height: 100%; object-fit: cover; width: 100%; }
+.photo-hint { margin: -14px 0 18px; }
+.question-card { color: inherit; cursor: pointer; display: block; text-align: left; width: 100%; }
+.question-card:hover { border-color: var(--leaf); }
+.question-card-body { align-items: flex-start; display: flex; gap: 11px; margin: 13px 0; }
+.question-card-body img { flex: 0 0 auto; height: 58px; object-fit: cover; width: 58px; }
+.question-card-body p { font-size: 13px; line-height: 1.5; margin: 0; }
+.question-status { align-items: center; background: var(--cream); display: flex; font-size: 11px; font-weight: 700; gap: 7px; padding: 9px 10px; }
+.question-status span { flex: 1; }
+.question-status.resolved { background: #dce9bf; }
+.reply-count { align-items: center; display: flex; justify-content: space-between; }
+.reply-count .feed-filter button { font-size: 10px; text-transform: none; }
+.waiting-note { animation: waiting 1.4s ease-in-out infinite alternate; }
+@keyframes waiting { from { opacity: .55; } to { opacity: 1; } }
+.compare-card { background: var(--white); border: 1px solid var(--line); margin-top: 18px; padding: 14px; }
+.compare-heading { align-items: center; display: flex; font-size: 12px; gap: 6px; margin-bottom: 10px; }
+.compare-row { display: grid; gap: 6px; padding: 8px 0; }
+.compare-row + .compare-row { border-top: 1px solid var(--line); }
+.compare-row strong { font-size: 13px; }
+.compare-row i { background: var(--lime); border-radius: 99px; font-size: 8px; font-style: normal; font-weight: 700; margin-left: 6px; padding: 2px 6px; text-transform: uppercase; vertical-align: 2px; }
+.compare-row small { color: var(--muted); display: block; font-size: 10px; margin-top: 2px; }
+.compare-bar { background: var(--cream); display: block; height: 8px; }
+.compare-bar span { display: block; height: 100%; transition: width .3s; }
+.compare-bar .green { background: var(--leaf); }
+.compare-bar .yellow { background: var(--yellow); }
+.compare-bar .orange { background: var(--orange); }
+.reply-answer.green { background: #dce9bf; }
+.reply-answer.yellow { background: #f3dfa2; }
+.reply-answer.orange { background: #edc1aa; }
+.reply-card.saved-answer { border: 2px solid var(--leaf); }
+.resolved-banner { align-items: center; background: #dce9bf; border: 1px solid var(--leaf); display: flex; font-size: 12px; gap: 8px; line-height: 1.4; margin-top: 14px; padding: 11px 12px; }
+.resolved-banner .icon { flex: 0 0 auto; }
+.toast .link-button { margin-left: auto; }
+.question-thread .comment-box { margin-top: 18px; }
+@media (prefers-reduced-motion: reduce) {
+  .waiting-note { animation: none; }
+}
