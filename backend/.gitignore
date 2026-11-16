@@ -1,4 +1,6 @@
 models/*.pt
+# The trained model is committed so Render can deploy it (see deploy/README.md).
+!models/classifier.pt
 __pycache__/
 data/
 .venv/

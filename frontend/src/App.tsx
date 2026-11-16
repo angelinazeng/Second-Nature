@@ -2,18 +2,23 @@ import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
 import GuideScreen, { ShareStatus } from './components/GuideScreen'
 import Icon from './components/Icon'
 import ItemDrawing from './components/ItemDrawing'
+import QuestionCard from './components/QuestionCard'
+import QuestionThread from './components/QuestionThread'
 import SharedGuideView from './components/SharedGuideView'
 import StoryCard from './components/StoryCard'
 import { catalog, ScanKey } from './data/catalog'
 import {
+  fetchQuestions,
   fetchStories,
   GuideEntry,
   guideLink,
   markHelpful,
   photoToDataUrl,
+  postQuestion,
   postReply,
   postStory,
   publishGuide,
+  Question,
   SharedGuide,
   Story,
 } from './lib/api'
@@ -26,6 +31,7 @@ type StoryKind = Story['kind']
 
 const USER_NAME = 'Alex Rivera'
 const allKeys = Object.keys(catalog) as ScanKey[]
+const nearbyCities = ['Portland', 'Beaverton', 'Gresham']
 const initialSharedGuide = new URLSearchParams(window.location.search).get('guide')
 
 function App() {
@@ -35,6 +41,8 @@ function App() {
   const [scanState, setScanState] = useState<ScanState>('idle')
   const [scanItem, setScanItem] = useState<ScanKey>('cardboard')
   const [confidence, setConfidence] = useState(0)
+  // False when the server couldn't classify the photo at all (no model, unreadable image).
+  const [hasGuess, setHasGuess] = useState(true)
   const [scanError, setScanError] = useState('')
   const [photo, setPhoto] = useState('')
   const [city, setCity] = usePersistentState('sn.city', 'Portland, OR')
@@ -46,12 +54,20 @@ function App() {
   const [shareStatus, setShareStatus] = useState<ShareStatus>('idle')
   const [communityView, setCommunityView] = useState<CommunityView>('feed')
   const [questionDetails, setQuestionDetails] = useState('')
-  const [questionItemTag, setQuestionItemTag] = useState('Mixed material')
-  const [questionCityTag, setQuestionCityTag] = useState('Portland')
-  const [helpful, setHelpful] = useState(false)
+  const [questionGuess, setQuestionGuess] = useState<ScanKey | null>(null)
+  const [questionFromScan, setQuestionFromScan] = useState(false)
+  const [questionPhoto, setQuestionPhoto] = useState('')
+  const [questionCityTag, setQuestionCityTag] = useState(city.split(',')[0])
+  const [asking, setAsking] = useState(false)
+  const [askError, setAskError] = useState('')
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [ownQuestionIds, setOwnQuestionIds] = usePersistentState<number[]>('sn.ownQuestions', [])
+  const [likedReplyIds, setLikedReplyIds] = usePersistentState<number[]>('sn.likedReplies', [])
+  const [openQuestionId, setOpenQuestionId] = useState<number | null>(null)
+  const [justPosted, setJustPosted] = useState(false)
   const [stories, setStories] = useState<Story[]>([])
   const [feedState, setFeedState] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [feedFilter, setFeedFilter] = useState<'all' | 'tip'>('all')
+  const [feedFilter, setFeedFilter] = useState<'all' | 'question' | 'tip'>('all')
   const [likedIds, setLikedIds] = usePersistentState<number[]>('sn.liked', [])
   const [ownStoryIds, setOwnStoryIds] = usePersistentState<number[]>('sn.ownStories', [])
   const [storyKind, setStoryKind] = useState<StoryKind>('story')
@@ -63,6 +79,8 @@ function App() {
   const [publishError, setPublishError] = useState('')
   const scanInput = useRef<HTMLInputElement>(null)
   const storyInput = useRef<HTMLInputElement>(null)
+  const questionInput = useRef<HTMLInputElement>(null)
+  const lastScanFile = useRef<File | null>(null)
 
   useEffect(() => {
     return () => {
@@ -70,19 +88,20 @@ function App() {
     }
   }, [photo])
 
-  const loadStories = useCallback(() => {
+  const loadFeed = useCallback(() => {
     setFeedState('loading')
-    fetchStories()
-      .then((data) => {
-        setStories(data)
+    Promise.all([fetchStories(), fetchQuestions()])
+      .then(([storyData, questionData]) => {
+        setStories(storyData)
+        setQuestions(questionData)
         setFeedState('ready')
       })
       .catch(() => setFeedState('error'))
   }, [])
 
   useEffect(() => {
-    if (tab === 'community' && communityView === 'feed') loadStories()
-  }, [tab, communityView, loadStories])
+    if (tab === 'community' && communityView === 'feed') loadFeed()
+  }, [tab, communityView, loadFeed])
 
   const result = catalog[scanItem]
 
@@ -117,6 +136,7 @@ function App() {
     event.target.value = ''
     if (!file) return
     if (photo) URL.revokeObjectURL(photo)
+    lastScanFile.current = file
     setPhoto(URL.createObjectURL(file))
     setScanError('')
     setScanState('scanning')
@@ -124,13 +144,15 @@ function App() {
       const body = new FormData()
       body.append('image', file)
       const response = await fetch('/api/classify', { body, method: 'POST' })
-      if (response.status === 503) {
-        setScanError("The photo model isn't trained yet. Run backend/ml/train.py (see README), then try again.")
-        setScanState('idle')
+      if (!response.ok) {
+        // The server answered but couldn't identify the item, so hand it to the community (Task 2).
+        setHasGuess(false)
+        setConfidence(0)
+        setScanState('unsure')
         return
       }
-      if (!response.ok) throw new Error('classify failed')
       const data: { confident: boolean; label: ScanKey; confidence: number } = await response.json()
+      setHasGuess(true)
       setScanItem(data.label)
       setConfidence(data.confidence)
       setScanState(data.confident ? 'resolved' : 'unsure')
@@ -144,10 +166,61 @@ function App() {
     addEntry(scanItem, 'scan')
   }
 
-  function openAsk() {
+  /** Opens the question form. From an unsure scan, the scan photo and best guess come along. */
+  async function openAsk(fromScan: boolean) {
+    setQuestionDetails('')
+    setQuestionGuess(fromScan && hasGuess ? scanItem : null)
+    setQuestionFromScan(fromScan)
+    setQuestionPhoto('')
+    setQuestionCityTag(city.split(',')[0])
+    setAskError('')
     setTab('community')
     setCommunityView('ask')
     window.scrollTo({ top: 0, behavior: 'smooth' })
+    if (fromScan && lastScanFile.current) {
+      setQuestionPhoto(await photoToDataUrl(lastScanFile.current).catch(() => ''))
+    }
+  }
+
+  async function chooseQuestionPhoto(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      setQuestionPhoto(await photoToDataUrl(file))
+    } catch {
+      setAskError("That photo couldn't be read. Try a JPEG or PNG.")
+    }
+  }
+
+  function openQuestion(id: number, posted = false) {
+    setOpenQuestionId(id)
+    setJustPosted(posted)
+    setTab('community')
+    setCommunityView('question')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  async function submitQuestion() {
+    if (!questionDetails.trim()) return setAskError('Describe the item so neighbors can help, like what it’s made of or any labels.')
+    setAsking(true)
+    setAskError('')
+    try {
+      const question = await postQuestion({
+        author: USER_NAME,
+        city: questionCityTag,
+        details: questionDetails.trim(),
+        guess: questionGuess ?? undefined,
+        photo: questionPhoto || undefined,
+      })
+      setOwnQuestionIds((current) => [...current, question.id])
+      setQuestions((current) => [question, ...current])
+      openQuestion(question.id, true)
+    } catch {
+      setAskError("Couldn't post your question. Make sure the app server is running, then try again.")
+    } finally {
+      setAsking(false)
+    }
   }
 
   /** Publishes (or updates) the guide on the server so the link always shows the latest version. */
@@ -237,7 +310,15 @@ function App() {
   }
 
   const headerTitle = { snap: 'Snap & Sort', guide: 'My Guide', profile: 'Profile', community: 'Community', shared: 'Shared Guide' }[tab]
-  const visibleStories = feedFilter === 'tip' ? stories.filter((story) => story.kind === 'tip') : stories
+  const feed: ({ type: 'story'; item: Story } | { type: 'question'; item: Question })[] = [
+    ...(feedFilter === 'tip' ? [] : questions.map((item) => ({ type: 'question' as const, item }))),
+    ...(feedFilter === 'question' ? [] : stories.filter((story) => feedFilter !== 'tip' || story.kind === 'tip').map((item) => ({ type: 'story' as const, item }))),
+  ].sort((a, b) => b.item.created_at - a.item.created_at)
+  const emptyFeedNote = {
+    all: 'No posts yet. Be the first to share.',
+    question: 'No questions yet. When a scan isn’t sure, tap “Ask the community”.',
+    tip: 'No tips yet. Open an item in My Guide and tap “Teach others”.',
+  }[feedFilter]
   const guideItems = entries.map((entry) => entry.key)
 
   return (
@@ -308,10 +389,19 @@ function App() {
           {scanState === 'unsure' && (
             <section className="answer-card unsure-card" aria-live="polite">
               <span className="unsure-mark">?</span>
-              <h2>We’re not totally sure.</h2>
-              <p>Our best guess is {catalog[scanItem].name.toLowerCase()} ({Math.round(confidence * 100)}% sure), which isn’t enough to sort it with confidence. A neighbor or waste expert may know best.</p>
-              <div className="possible-tags"><span>{catalog[scanItem].name}</span></div>
-              <button className="primary-action" onClick={openAsk} type="button">
+              {hasGuess ? (
+                <>
+                  <h2>We’re not totally sure.</h2>
+                  <p>Our best guess is {catalog[scanItem].name.toLowerCase()} ({Math.round(confidence * 100)}% sure), which isn’t enough to sort it with confidence. A neighbor or waste expert may know best.</p>
+                  <div className="possible-tags"><span>{catalog[scanItem].name}</span></div>
+                </>
+              ) : (
+                <>
+                  <h2>We couldn’t identify this item.</h2>
+                  <p>Local rules can vary, so a neighbor or waste expert may know best. Your photo will be attached to your question.</p>
+                </>
+              )}
+              <button className="primary-action" onClick={() => openAsk(true)} type="button">
                 <Icon name="community" size={19} /> Ask the community
               </button>
             </section>
@@ -328,7 +418,7 @@ function App() {
                 <button aria-label="Start a story" className="square-action" onClick={() => openComposer('story')} type="button"><Icon name="plus" /></button>
               </section>
               <div className="community-actions">
-                <button onClick={() => setCommunityView('ask')} type="button">
+                <button onClick={() => openAsk(false)} type="button">
                   <span><Icon name="community" /></span>
                   <div><strong>Ask a sorting question</strong><small>Get help with a tricky item</small></div>
                   <Icon name="chevron" size={17} />
@@ -344,28 +434,34 @@ function App() {
                 <span>From your neighborhood</span>
                 <div className="feed-filter" role="group" aria-label="Filter posts">
                   <button className={feedFilter === 'all' ? 'active' : ''} onClick={() => setFeedFilter('all')} type="button">All</button>
+                  <button className={feedFilter === 'question' ? 'active' : ''} onClick={() => setFeedFilter('question')} type="button">Questions</button>
                   <button className={feedFilter === 'tip' ? 'active' : ''} onClick={() => setFeedFilter('tip')} type="button">Tips</button>
                 </div>
               </div>
-              {feedState === 'loading' && stories.length === 0 && <p className="loading-note">Loading posts…</p>}
+              {feedState === 'loading' && feed.length === 0 && <p className="loading-note">Loading posts…</p>}
               {feedState === 'error' && (
                 <p className="scan-error" role="alert">
                   We couldn’t reach the community right now. Make sure the app server is running.{' '}
-                  <button className="link-button" onClick={loadStories} type="button">Try again</button>
+                  <button className="link-button" onClick={loadFeed} type="button">Try again</button>
                 </p>
               )}
-              {feedState === 'ready' && visibleStories.length === 0 && (
-                <p className="loading-note">{feedFilter === 'tip' ? 'No tips yet. Open an item in My Guide and tap “Teach others”.' : 'No posts yet. Be the first to share.'}</p>
-              )}
-              {visibleStories.map((story) => (
+              {feedState === 'ready' && feed.length === 0 && <p className="loading-note">{emptyFeedNote}</p>}
+              {feed.map((entry) => entry.type === 'question' ? (
+                <QuestionCard
+                  key={`q${entry.item.id}`}
+                  onOpen={() => openQuestion(entry.item.id)}
+                  own={ownQuestionIds.includes(entry.item.id)}
+                  question={entry.item}
+                />
+              ) : (
                 <StoryCard
-                  key={story.id}
-                  liked={likedIds.includes(story.id)}
+                  key={`s${entry.item.id}`}
+                  liked={likedIds.includes(entry.item.id)}
                   onOpenGuide={openSharedGuide}
-                  onReply={(text) => reply(story.id, text)}
-                  onToggleHelpful={() => toggleHelpful(story.id)}
-                  own={ownStoryIds.includes(story.id)}
-                  story={story}
+                  onReply={(text) => reply(entry.item.id, text)}
+                  onToggleHelpful={() => toggleHelpful(entry.item.id)}
+                  own={ownStoryIds.includes(entry.item.id)}
+                  story={entry.item}
                 />
               ))}
             </>
@@ -376,7 +472,14 @@ function App() {
               <button className="text-back" onClick={() => setCommunityView('feed')} type="button"><Icon name="back" size={18} /> Community</button>
               <span className="mini-kicker">Ask your neighbors</span>
               <h1>What should we know?</h1>
-              <div className="question-photo"><ItemDrawing item="mystery" /><button type="button"><Icon name="camera" size={17} /> Change photo</button></div>
+              <input accept="image/*" onChange={chooseQuestionPhoto} ref={questionInput} type="file" />
+              <div className={`question-photo ${questionPhoto ? 'has-photo' : ''}`}>
+                {questionPhoto ? <img alt="Item you're asking about" src={questionPhoto} /> : <ItemDrawing item="mystery" />}
+                <button onClick={() => questionInput.current?.click()} type="button">
+                  <Icon name="camera" size={17} /> {questionPhoto ? 'Change photo' : 'Add a photo'}
+                </button>
+              </div>
+              {questionFromScan && questionPhoto && <small className="field-hint photo-hint">Your scan photo is attached so neighbors can see the item.</small>}
               <label>
                 Details
                 <textarea
@@ -387,52 +490,44 @@ function App() {
                 />
               </label>
               <fieldset>
-                <legend>Item tag</legend>
+                <legend>What do you think it is?</legend>
                 <div className="choice-row">
-                  {['Mixed material', 'Packaging', 'Not sure'].map((tag) => (
-                    <button className={questionItemTag === tag ? 'selected' : ''} key={tag} onClick={() => setQuestionItemTag(tag)} type="button">{tag}</button>
+                  {allKeys.map((key) => (
+                    <button className={questionGuess === key ? 'selected' : ''} key={key} onClick={() => setQuestionGuess(key)} type="button">{catalog[key].name}</button>
                   ))}
+                  <button className={questionGuess === null ? 'selected' : ''} onClick={() => setQuestionGuess(null)} type="button">Not sure</button>
                 </div>
+                {questionFromScan && hasGuess && (
+                  <small className="field-hint">Our scan’s best guess was {catalog[scanItem].name.toLowerCase()} ({Math.round(confidence * 100)}% sure).</small>
+                )}
               </fieldset>
               <fieldset>
                 <legend>City tag</legend>
                 <div className="choice-row">
-                  {['Portland', 'Beaverton', 'Gresham'].map((tag) => (
+                  {[...new Set([city.split(',')[0], ...nearbyCities])].map((tag) => (
                     <button className={questionCityTag === tag ? 'selected' : ''} key={tag} onClick={() => setQuestionCityTag(tag)} type="button">{tag}</button>
                   ))}
                 </div>
               </fieldset>
-              <button className="primary-action" onClick={() => setCommunityView('question')} type="button">
-                Post question <Icon name="send" size={18} />
+              {askError && <p className="scan-error" role="alert">{askError}</p>}
+              <button className="primary-action" disabled={asking} onClick={submitQuestion} type="button">
+                {asking ? 'Posting…' : 'Post question'} <Icon name="send" size={18} />
               </button>
             </section>
           )}
 
-          {communityView === 'question' && (
-            <section className="question-thread">
-              <button className="text-back" onClick={() => setCommunityView('feed')} type="button"><Icon name="back" size={18} /> Community</button>
-              <div className="posted-badge"><Icon name="check" size={15} /> Question posted</div>
-              <div className="post-author"><span className="avatar">AR</span><div><strong>You</strong><small>Just now · {questionCityTag}</small></div></div>
-              <h1>Where should this package go?</h1>
-              <p>{questionDetails || 'It feels like paper on the outside but has a shiny lining inside. There is no recycling symbol.'}</p>
-              <div className="possible-tags"><span>{questionItemTag}</span><span>{questionCityTag}</span></div>
-              <div className="reply-count">1 expert reply</div>
-              <article className="reply-card">
-                <div className="post-author"><span className="avatar expert">MK</span><div><strong>Maya K. <i>Expert</i></strong><small>Portland waste educator · 3m</small></div></div>
-                <p>The shiny lining makes this a mixed-material pouch. In Portland, it belongs in the trash—not curbside recycling.</p>
-                <div className="reply-answer"><Icon name="check" size={17} /><span>Best answer: <strong>Trash bin</strong></span></div>
-                <div className="reply-actions">
-                  <button className={helpful ? 'active' : ''} onClick={() => setHelpful(!helpful)} type="button"><Icon name="heart" size={17} /> {helpful ? 'Helpful' : 'Mark helpful'}</button>
-                  <button
-                    className={isSaved('trash') ? 'active' : ''}
-                    onClick={() => addEntry('trash', 'community', 'Paper pouches with a shiny lining go in the trash, not recycling (Maya K., waste educator).')}
-                    type="button"
-                  >
-                    <Icon name={isSaved('trash') ? 'check' : 'save'} size={17} /> {isSaved('trash') ? 'Saved to My Guide' : 'Save to My Guide'}
-                  </button>
-                </div>
-              </article>
-            </section>
+          {communityView === 'question' && openQuestionId !== null && (
+            <QuestionThread
+              justPosted={justPosted}
+              likedReplyIds={likedReplyIds}
+              onBack={() => setCommunityView('feed')}
+              onLikedChange={setLikedReplyIds}
+              onSaveToGuide={(key, tip) => addEntry(key, 'community', tip)}
+              onViewGuide={() => goTo('guide')}
+              own={ownQuestionIds.includes(openQuestionId)}
+              questionId={openQuestionId}
+              userName={USER_NAME}
+            />
           )}
 
           {communityView === 'story' && (
