@@ -1,2 +1,6 @@
 models/*.pt
 __pycache__/
+data/
+.venv/
+trashnet/
+trashnet.zip

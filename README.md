@@ -11,6 +11,20 @@ paper, plastic, trash), returns the item, the bin, and a "why" explanation. If t
 prediction is under 80% confident, the app shows the "not totally sure" state that leads to
 Task 2 (Ask the community).
 
+## Task 3: Build a household guide and teach others
+
+- **My Guide** collects saved answers (from a scan, or "Save to My Guide" on a community answer).
+  It stays saved in the browser after a reload. Items are grouped by bin. Tap one to see why it goes
+  there, add a household tip, remove it, or **Teach others** (opens a tip post for that item).
+  **Review gaps** lists the materials that aren't in the guide yet.
+- **Share guide with family** saves the guide to the backend and copies a link (`/?guide=<id>`).
+  The link always shows the latest version. Anyone who opens it sees a read-only guide and can
+  add those items to their own guide.
+- **Community** shows stories and item tips from the backend. Posts can have a photo and an
+  attached guide that readers can open. People can mark posts helpful and reply.
+- Guides, posts and replies are stored in SQLite at `backend/data/second_nature.db`, which is
+  created on first run and not committed. These endpoints work without the trained model.
+
 ## Requirements
 
 - Python 3.10+

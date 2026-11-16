@@ -1,40 +1,66 @@
-import { ChangeEvent, useEffect, useRef, useState } from 'react'
-import GuideAttachment from './components/GuideAttachment'
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react'
+import GuideScreen, { ShareStatus } from './components/GuideScreen'
 import Icon from './components/Icon'
 import ItemDrawing from './components/ItemDrawing'
+import SharedGuideView from './components/SharedGuideView'
+import StoryCard from './components/StoryCard'
 import { catalog, ScanKey } from './data/catalog'
+import {
+  fetchStories,
+  GuideEntry,
+  guideLink,
+  markHelpful,
+  photoToDataUrl,
+  postReply,
+  postStory,
+  publishGuide,
+  SharedGuide,
+  Story,
+} from './lib/api'
+import { usePersistentState } from './lib/usePersistentState'
 
-type Tab = 'snap' | 'community' | 'guide' | 'profile'
+type Tab = 'snap' | 'community' | 'guide' | 'profile' | 'shared'
 type ScanState = 'idle' | 'scanning' | 'resolved' | 'unsure'
 type CommunityView = 'feed' | 'ask' | 'question' | 'story'
+type StoryKind = Story['kind']
+
+const USER_NAME = 'Alex Rivera'
+const allKeys = Object.keys(catalog) as ScanKey[]
+const initialSharedGuide = new URLSearchParams(window.location.search).get('guide')
 
 function App() {
-  const [tab, setTab] = useState<Tab>('snap')
+  const [tab, setTab] = useState<Tab>(initialSharedGuide ? 'shared' : 'snap')
+  const [sharedGuideId, setSharedGuideId] = useState(initialSharedGuide ?? '')
+  const [returnTab, setReturnTab] = useState<Tab>('snap')
   const [scanState, setScanState] = useState<ScanState>('idle')
   const [scanItem, setScanItem] = useState<ScanKey>('cardboard')
   const [confidence, setConfidence] = useState(0)
   const [scanError, setScanError] = useState('')
   const [photo, setPhoto] = useState('')
-  const [city, setCity] = useState('Portland, OR')
-  const [household, setHousehold] = useState('The Rivera household')
+  const [city, setCity] = usePersistentState('sn.city', 'Portland, OR')
+  const [household, setHousehold] = usePersistentState('sn.household', 'The Rivera household')
   const [profileSaved, setProfileSaved] = useState(false)
-  const [savedItems, setSavedItems] = useState<ScanKey[]>([])
-  const [personalNote, setPersonalNote] = useState('')
-  const [grouped, setGrouped] = useState(false)
-  const [showGaps, setShowGaps] = useState(false)
-  const [shared, setShared] = useState(false)
+  const [entries, setEntries] = usePersistentState<GuideEntry[]>('sn.guide.entries', [])
+  const [personalNote, setPersonalNote] = usePersistentState('sn.guide.note', '')
+  const [shareId, setShareId] = usePersistentState('sn.guide.shareId', '')
+  const [shareStatus, setShareStatus] = useState<ShareStatus>('idle')
   const [communityView, setCommunityView] = useState<CommunityView>('feed')
   const [questionDetails, setQuestionDetails] = useState('')
   const [questionItemTag, setQuestionItemTag] = useState('Mixed material')
   const [questionCityTag, setQuestionCityTag] = useState('Portland')
   const [helpful, setHelpful] = useState(false)
-  const [replySaved, setReplySaved] = useState(false)
+  const [stories, setStories] = useState<Story[]>([])
+  const [feedState, setFeedState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const [feedFilter, setFeedFilter] = useState<'all' | 'tip'>('all')
+  const [likedIds, setLikedIds] = usePersistentState<number[]>('sn.liked', [])
+  const [ownStoryIds, setOwnStoryIds] = usePersistentState<number[]>('sn.ownStories', [])
+  const [storyKind, setStoryKind] = useState<StoryKind>('story')
+  const [tipItem, setTipItem] = useState<ScanKey | null>(null)
   const [storyCaption, setStoryCaption] = useState('')
   const [storyPhoto, setStoryPhoto] = useState('')
   const [guideAttached, setGuideAttached] = useState(false)
-  const [storyPublished, setStoryPublished] = useState(false)
-  const [comment, setComment] = useState('')
-  const [comments, setComments] = useState<string[]>([])
+  const [publishing, setPublishing] = useState(false)
+  const [publishError, setPublishError] = useState('')
   const scanInput = useRef<HTMLInputElement>(null)
   const storyInput = useRef<HTMLInputElement>(null)
 
@@ -44,18 +70,46 @@ function App() {
     }
   }, [photo])
 
+  const loadStories = useCallback(() => {
+    setFeedState('loading')
+    fetchStories()
+      .then((data) => {
+        setStories(data)
+        setFeedState('ready')
+      })
+      .catch(() => setFeedState('error'))
+  }, [])
+
   useEffect(() => {
-    return () => {
-      if (storyPhoto) URL.revokeObjectURL(storyPhoto)
-    }
-  }, [storyPhoto])
+    if (tab === 'community' && communityView === 'feed') loadStories()
+  }, [tab, communityView, loadStories])
 
   const result = catalog[scanItem]
+
+  const isSaved = (key: ScanKey) => entries.some((entry) => entry.key === key)
 
   function goTo(next: Tab) {
     setTab(next)
     if (next === 'community') setCommunityView('feed')
+    if (window.location.search) window.history.replaceState(null, '', window.location.pathname)
     window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function openSharedGuide(id: string) {
+    setReturnTab(tab)
+    setSharedGuideId(id)
+    setTab('shared')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function addEntry(key: ScanKey, source: GuideEntry['source'], tip = '') {
+    setEntries((current) => current.some((entry) => entry.key === key)
+      ? current.map((entry) => entry.key === key && tip && !entry.tip ? { ...entry, tip } : entry)
+      : [...current, { key, tip, savedAt: Date.now(), source }])
+  }
+
+  function adoptGuide(guide: SharedGuide) {
+    for (const item of guide.items) addEntry(item.key, 'shared', item.tip)
   }
 
   async function uploadScan(event: ChangeEvent<HTMLInputElement>) {
@@ -70,6 +124,11 @@ function App() {
       const body = new FormData()
       body.append('image', file)
       const response = await fetch('/api/classify', { body, method: 'POST' })
+      if (response.status === 503) {
+        setScanError("The photo model isn't trained yet. Run backend/ml/train.py (see README), then try again.")
+        setScanState('idle')
+        return
+      }
       if (!response.ok) throw new Error('classify failed')
       const data: { confident: boolean; label: ScanKey; confidence: number } = await response.json()
       setScanItem(data.label)
@@ -82,7 +141,7 @@ function App() {
   }
 
   function saveCurrentItem() {
-    setSavedItems((current) => current.includes(scanItem) ? current : [...current, scanItem])
+    addEntry(scanItem, 'scan')
   }
 
   function openAsk() {
@@ -91,26 +150,95 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  function shareGuide() {
-    navigator.clipboard?.writeText('https://snapsort.local/guide/rivera')
-    setShared(true)
-    window.setTimeout(() => setShared(false), 2200)
+  /** Publishes (or updates) the guide on the server so the link always shows the latest version. */
+  async function syncGuide() {
+    const guide = await publishGuide({ id: shareId || undefined, household, city, note: personalNote, entries })
+    setShareId(guide.id)
+    return guide
   }
 
-  function uploadStoryPhoto(event: ChangeEvent<HTMLInputElement>) {
+  async function shareGuide() {
+    setShareStatus('sharing')
+    try {
+      const guide = await syncGuide()
+      await navigator.clipboard?.writeText(guideLink(guide.id)).catch(() => undefined)
+      setShareStatus('copied')
+      window.setTimeout(() => setShareStatus('idle'), 2400)
+    } catch {
+      setShareStatus('error')
+      window.setTimeout(() => setShareStatus('idle'), 4000)
+    }
+  }
+
+  function openComposer(kind: StoryKind, key: ScanKey | null = null, caption = '') {
+    setStoryKind(kind)
+    setTipItem(key)
+    setStoryCaption(caption)
+    setStoryPhoto('')
+    setGuideAttached(false)
+    setPublishError('')
+    setTab('community')
+    setCommunityView('story')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  async function uploadStoryPhoto(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
+    event.target.value = ''
     if (!file) return
-    if (storyPhoto) URL.revokeObjectURL(storyPhoto)
-    setStoryPhoto(URL.createObjectURL(file))
+    try {
+      setStoryPhoto(await photoToDataUrl(file))
+    } catch {
+      setPublishError("That photo couldn't be read. Try a JPEG or PNG.")
+    }
   }
 
-  function publishComment() {
-    if (!comment.trim()) return
-    setComments((current) => [...current, comment.trim()])
-    setComment('')
+  async function publishStory() {
+    if (!storyCaption.trim()) return setPublishError(storyKind === 'tip' ? 'Write the tip you want to pass on.' : 'Add a caption so neighbors know what worked.')
+    if (storyKind === 'tip' && !tipItem) return setPublishError('Pick which item this tip is about.')
+    setPublishing(true)
+    setPublishError('')
+    try {
+      const guideId = guideAttached ? (await syncGuide()).id : undefined
+      const story = await postStory({
+        kind: storyKind,
+        author: USER_NAME,
+        city,
+        caption: storyCaption.trim(),
+        item_key: storyKind === 'tip' ? tipItem ?? undefined : undefined,
+        guide_id: guideId,
+        photo: storyPhoto || undefined,
+      })
+      setOwnStoryIds((current) => [...current, story.id])
+      setStories((current) => [story, ...current])
+      setCommunityView('feed')
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch {
+      setPublishError("Couldn't publish. Make sure the app server is running, then try again.")
+    } finally {
+      setPublishing(false)
+    }
   }
 
-  const headerTitle = tab === 'snap' ? 'Snap & Sort' : tab === 'guide' ? 'My Guide' : tab === 'profile' ? 'Profile' : 'Community'
+  const replaceStory = (story: Story) => setStories((current) => current.map((s) => (s.id === story.id ? story : s)))
+
+  async function toggleHelpful(id: number) {
+    const liked = likedIds.includes(id)
+    try {
+      replaceStory(await markHelpful(id, liked ? -1 : 1))
+      setLikedIds((current) => liked ? current.filter((x) => x !== id) : [...current, id])
+    } catch {
+      setFeedState('error')
+    }
+  }
+
+  async function reply(id: number, text: string) {
+    replaceStory(await postReply(id, USER_NAME, text))
+  }
+
+  const headerTitle = { snap: 'Snap & Sort', guide: 'My Guide', profile: 'Profile', community: 'Community', shared: 'Shared Guide' }[tab]
+  const visibleStories = feedFilter === 'tip' ? stories.filter((story) => story.kind === 'tip') : stories
+  const guideItems = entries.map((entry) => entry.key)
 
   return (
     <main className="phone-app">
@@ -118,7 +246,7 @@ function App() {
         <button
           aria-label="Go back"
           className={`icon-button ${tab === 'snap' ? 'brand-button' : ''}`}
-          onClick={() => goTo('snap')}
+          onClick={() => goTo(tab === 'shared' ? returnTab : 'snap')}
           type="button"
         >
           {tab === 'snap' ? <Icon name="leaf" size={21} /> : <Icon name="back" size={22} />}
@@ -167,12 +295,12 @@ function App() {
                 <p>{result.why}</p>
               </div>
               <button
-                className={savedItems.includes(scanItem) ? 'secondary-action saved' : 'secondary-action'}
+                className={isSaved(scanItem) ? 'secondary-action saved' : 'secondary-action'}
                 onClick={saveCurrentItem}
                 type="button"
               >
-                <Icon name={savedItems.includes(scanItem) ? 'check' : 'save'} size={18} />
-                {savedItems.includes(scanItem) ? 'Saved to My Guide' : 'Save to My Guide'}
+                <Icon name={isSaved(scanItem) ? 'check' : 'save'} size={18} />
+                {isSaved(scanItem) ? 'Saved to My Guide' : 'Save to My Guide'}
               </button>
             </section>
           )}
@@ -197,7 +325,7 @@ function App() {
             <>
               <section className="screen-heading">
                 <div><span className="mini-kicker">Neighbors helping neighbors</span><h1>Community</h1></div>
-                <button aria-label="Start a story" className="square-action" onClick={() => setCommunityView('story')} type="button"><Icon name="plus" /></button>
+                <button aria-label="Start a story" className="square-action" onClick={() => openComposer('story')} type="button"><Icon name="plus" /></button>
               </section>
               <div className="community-actions">
                 <button onClick={() => setCommunityView('ask')} type="button">
@@ -205,36 +333,41 @@ function App() {
                   <div><strong>Ask a sorting question</strong><small>Get help with a tricky item</small></div>
                   <Icon name="chevron" size={17} />
                 </button>
-                <button onClick={() => setCommunityView('story')} type="button">
+                <button onClick={() => openComposer('story')} type="button">
                   <span><Icon name="spark" /></span>
-                  <div><strong>Share a story</strong><small>Pass a useful habit along</small></div>
+                  <div><strong>Share a story or tip</strong><small>Pass a useful habit along</small></div>
                   <Icon name="chevron" size={17} />
                 </button>
               </div>
 
-              <div className="feed-label"><span>From your neighborhood</span><button type="button">Latest</button></div>
-              {storyPublished && (
-                <article className="story-card own-story">
-                  <div className="post-author"><span className="avatar">AR</span><div><strong>You</strong><small>Just now · {city}</small></div></div>
-                  {storyPhoto && <img alt="Shared sustainable practice" className="story-photo" src={storyPhoto} />}
-                  <p>{storyCaption || 'A small change our household is keeping.'}</p>
-                  {guideAttached && <GuideAttachment city={city} count={savedItems.length} household={household} />}
-                  <div className="story-stats"><span><Icon name="heart" size={16} /> 1 helpful</span><span>{comments.length} {comments.length === 1 ? 'reply' : 'replies'}</span></div>
-                  {comments.map((text, index) => (
-                    <div className="comment" key={`${text}-${index}`}><span>AR</span><p><strong>You</strong>{text}</p></div>
-                  ))}
-                  <div className="comment-box">
-                    <input onChange={(event) => setComment(event.target.value)} placeholder="Reply to a comment…" value={comment} />
-                    <button aria-label="Post reply" onClick={publishComment} type="button"><Icon name="send" size={17} /></button>
-                  </div>
-                </article>
+              <div className="feed-label">
+                <span>From your neighborhood</span>
+                <div className="feed-filter" role="group" aria-label="Filter posts">
+                  <button className={feedFilter === 'all' ? 'active' : ''} onClick={() => setFeedFilter('all')} type="button">All</button>
+                  <button className={feedFilter === 'tip' ? 'active' : ''} onClick={() => setFeedFilter('tip')} type="button">Tips</button>
+                </div>
+              </div>
+              {feedState === 'loading' && stories.length === 0 && <p className="loading-note">Loading posts…</p>}
+              {feedState === 'error' && (
+                <p className="scan-error" role="alert">
+                  We couldn’t reach the community right now. Make sure the app server is running.{' '}
+                  <button className="link-button" onClick={loadStories} type="button">Try again</button>
+                </p>
               )}
-              <article className="story-card">
-                <div className="post-author"><span className="avatar expert">MK</span><div><strong>Maya K.</strong><small>Waste educator · 2h</small></div></div>
-                <p>I made a five-minute “sorting shelf” by our back door. Now everyone knows where batteries and soft plastics wait for drop-off.</p>
-                <div className="paper-illustration"><Icon name="recycle" size={38} /><span>One shelf.<br />No guesswork.</span></div>
-                <div className="story-stats"><span><Icon name="heart" size={16} /> 34 helpful</span><span>8 replies</span></div>
-              </article>
+              {feedState === 'ready' && visibleStories.length === 0 && (
+                <p className="loading-note">{feedFilter === 'tip' ? 'No tips yet. Open an item in My Guide and tap “Teach others”.' : 'No posts yet. Be the first to share.'}</p>
+              )}
+              {visibleStories.map((story) => (
+                <StoryCard
+                  key={story.id}
+                  liked={likedIds.includes(story.id)}
+                  onOpenGuide={openSharedGuide}
+                  onReply={(text) => reply(story.id, text)}
+                  onToggleHelpful={() => toggleHelpful(story.id)}
+                  own={ownStoryIds.includes(story.id)}
+                  story={story}
+                />
+              ))}
             </>
           )}
 
@@ -291,14 +424,11 @@ function App() {
                 <div className="reply-actions">
                   <button className={helpful ? 'active' : ''} onClick={() => setHelpful(!helpful)} type="button"><Icon name="heart" size={17} /> {helpful ? 'Helpful' : 'Mark helpful'}</button>
                   <button
-                    className={replySaved ? 'active' : ''}
-                    onClick={() => {
-                      setReplySaved(true)
-                      setSavedItems((current) => current.includes('trash') ? current : [...current, 'trash'])
-                    }}
+                    className={isSaved('trash') ? 'active' : ''}
+                    onClick={() => addEntry('trash', 'community', 'Paper pouches with a shiny lining go in the trash, not recycling (Maya K., waste educator).')}
                     type="button"
                   >
-                    <Icon name={replySaved ? 'check' : 'save'} size={17} /> {replySaved ? 'Saved to item' : 'Save to item'}
+                    <Icon name={isSaved('trash') ? 'check' : 'save'} size={17} /> {isSaved('trash') ? 'Saved to My Guide' : 'Save to My Guide'}
                   </button>
                 </div>
               </article>
@@ -308,30 +438,55 @@ function App() {
           {communityView === 'story' && (
             <section className="composer-screen">
               <button className="text-back" onClick={() => setCommunityView('feed')} type="button"><Icon name="back" size={18} /> Community</button>
-              <span className="mini-kicker">Share what worked</span>
-              <h1>Start a story</h1>
+              <span className="mini-kicker">Teach your neighbors</span>
+              <h1>{storyKind === 'tip' ? 'Share a tip' : 'Start a story'}</h1>
+              <fieldset>
+                <legend>What are you sharing?</legend>
+                <div className="choice-row">
+                  <button className={storyKind === 'story' ? 'selected' : ''} onClick={() => setStoryKind('story')} type="button">A story</button>
+                  <button className={storyKind === 'tip' ? 'selected' : ''} onClick={() => setStoryKind('tip')} type="button">An item tip</button>
+                </div>
+              </fieldset>
+              {storyKind === 'tip' && (
+                <fieldset>
+                  <legend>Which item?</legend>
+                  <div className="choice-row">
+                    {(guideItems.length ? [...guideItems, ...allKeys.filter((key) => !guideItems.includes(key))] : allKeys).map((key) => (
+                      <button className={tipItem === key ? 'selected' : ''} key={key} onClick={() => setTipItem(key)} type="button">{catalog[key].name}</button>
+                    ))}
+                  </div>
+                  {tipItem && <small className="field-hint">Shows as: {catalog[tipItem].name} → {catalog[tipItem].bin}</small>}
+                </fieldset>
+              )}
               <input accept="image/*" onChange={uploadStoryPhoto} ref={storyInput} type="file" />
               <button className={`story-photo-picker ${storyPhoto ? 'has-photo' : ''}`} onClick={() => storyInput.current?.click()} type="button">
-                {storyPhoto ? <img alt="Story upload preview" src={storyPhoto} /> : <><Icon name="camera" size={28} /><span>Add a photo</span></>}
+                {storyPhoto ? <img alt="Story upload preview" src={storyPhoto} /> : <><Icon name="camera" size={28} /><span>Add a photo (optional)</span></>}
               </button>
               <label>
-                Caption
-                <textarea onChange={(event) => setStoryCaption(event.target.value)} placeholder="What did your household learn?" rows={4} value={storyCaption} />
+                {storyKind === 'tip' ? 'Your tip' : 'Caption'}
+                <textarea
+                  onChange={(event) => setStoryCaption(event.target.value)}
+                  placeholder={storyKind === 'tip' ? 'What should others know about sorting this?' : 'What did your household learn?'}
+                  rows={4}
+                  value={storyCaption}
+                />
               </label>
-              <button className={`attach-guide ${guideAttached ? 'attached' : ''}`} onClick={() => setGuideAttached(!guideAttached)} type="button">
-                <Icon name={guideAttached ? 'check' : 'guide'} />
-                <div><strong>{guideAttached ? 'Guide attached' : 'Attach My Guide'}</strong><small>{savedItems.length} saved items · {household}</small></div>
-                {!guideAttached && <Icon name="plus" size={18} />}
-              </button>
               <button
-                className="primary-action"
-                onClick={() => {
-                  setStoryPublished(true)
-                  setCommunityView('feed')
-                }}
+                className={`attach-guide ${guideAttached ? 'attached' : ''}`}
+                disabled={entries.length === 0}
+                onClick={() => setGuideAttached(!guideAttached)}
                 type="button"
               >
-                Publish story <Icon name="send" size={18} />
+                <Icon name={guideAttached ? 'check' : 'guide'} />
+                <div>
+                  <strong>{guideAttached ? 'Guide attached' : 'Attach My Guide'}</strong>
+                  <small>{entries.length ? `${entries.length} saved items · ${household}` : 'Save items to My Guide first'}</small>
+                </div>
+                {!guideAttached && entries.length > 0 && <Icon name="plus" size={18} />}
+              </button>
+              {publishError && <p className="scan-error" role="alert">{publishError}</p>}
+              <button className="primary-action" disabled={publishing} onClick={publishStory} type="button">
+                {publishing ? 'Publishing…' : storyKind === 'tip' ? 'Publish tip' : 'Publish story'} <Icon name="send" size={18} />
               </button>
             </section>
           )}
@@ -339,69 +494,29 @@ function App() {
       )}
 
       {tab === 'guide' && (
-        <div className="app-screen guide-screen">
-          <section className="screen-heading">
-            <div><span className="mini-kicker">{household}</span><h1>My Guide</h1></div>
-            <button aria-label="Share guide" className="square-action" onClick={shareGuide} type="button"><Icon name={shared ? 'check' : 'share'} /></button>
-          </section>
-          {shared && <div className="toast"><Icon name="check" size={16} /> Family guide link copied</div>}
-          <div className="guide-summary">
-            <div><strong>{savedItems.length}</strong><span>items saved</span></div>
-            <div><strong>{new Set(savedItems.map((item) => catalog[item].bin)).size}</strong><span>bin types</span></div>
-            <div><strong>{city.split(',')[0]}</strong><span>local rules</span></div>
-          </div>
-          <div className="guide-toolbar">
-            <button className={grouped ? 'active' : ''} onClick={() => setGrouped(!grouped)} type="button"><Icon name="guide" size={16} /> {grouped ? 'Grouped by bin' : 'Group by bin'}</button>
-            <button onClick={() => setShowGaps(!showGaps)} type="button"><Icon name="spark" size={16} /> Review gaps</button>
-          </div>
-          {showGaps && (
-            <div className="gap-card">
-              <Icon name="spark" />
-              <div><strong>Your everyday basics are covered.</strong><p>Add batteries or paint next to cover hazardous drop-offs.</p></div>
-              <button onClick={() => goTo('snap')} type="button">Scan one</button>
-            </div>
-          )}
-          {savedItems.length === 0 ? (
-            <div className="empty-guide">
-              <span><Icon name="guide" size={36} /></span>
-              <h2>Build your household guide</h2>
-              <p>Save answers after you scan. They’ll stay organized here for everyone at home.</p>
-              <button className="primary-action" onClick={() => goTo('snap')} type="button"><Icon name="camera" size={18} /> Scan your first item</button>
-            </div>
-          ) : (
-            <div className="saved-list">
-              {grouped && <div className="list-heading">Sorted by local bin type</div>}
-              {savedItems
-                .slice()
-                .sort((a, b) => grouped ? catalog[a].bin.localeCompare(catalog[b].bin) : 0)
-                .map((item) => (
-                  <article className="saved-item" key={item}>
-                    <span className={`item-thumb ${catalog[item].color}`}><ItemDrawing item={item} /></span>
-                    <div><strong>{catalog[item].name}</strong><small>{catalog[item].bin}</small></div>
-                    <Icon name="chevron" size={17} />
-                  </article>
-                ))}
-            </div>
-          )}
-          <label className="personal-note">
-            <span>Our household “why”</span>
-            <textarea
-              onChange={(event) => setPersonalNote(event.target.value)}
-              placeholder="Why does sorting well matter to your family?"
-              rows={3}
-              value={personalNote}
-            />
-            <small>{personalNote ? 'Saved to your family guide' : 'Add a note everyone at home can see.'}</small>
-          </label>
-          <button className="share-guide-button" onClick={shareGuide} type="button"><Icon name="share" size={18} /> {shared ? 'Link copied' : 'Share guide with family'}</button>
-        </div>
+        <GuideScreen
+          city={city}
+          entries={entries}
+          household={household}
+          note={personalNote}
+          onEntriesChange={setEntries}
+          onNoteChange={setPersonalNote}
+          onScan={() => goTo('snap')}
+          onShare={shareGuide}
+          onTeach={(key, tip) => openComposer('tip', key, tip)}
+          shareStatus={shareStatus}
+        />
+      )}
+
+      {tab === 'shared' && sharedGuideId && (
+        <SharedGuideView guideId={sharedGuideId} onAdopt={adoptGuide} onBack={() => goTo(returnTab)} />
       )}
 
       {tab === 'profile' && (
         <div className="app-screen profile-screen">
           <section className="profile-intro">
             <span className="large-avatar">AR</span>
-            <h1>Alex Rivera</h1>
+            <h1>{USER_NAME}</h1>
             <p>Making the everyday stuff easier to sort.</p>
           </section>
           {profileSaved && <div className="toast"><Icon name="check" size={16} /> Profile updated</div>}
@@ -421,7 +536,7 @@ function App() {
           </section>
           <section className="impact-panel">
             <span><Icon name="leaf" size={22} /></span>
-            <div><small>Your household impact</small><strong>{savedItems.length + 12} items sorted with confidence</strong></div>
+            <div><small>Your household impact</small><strong>{entries.length} {entries.length === 1 ? 'item' : 'items'} in your household guide</strong></div>
           </section>
         </div>
       )}
@@ -429,7 +544,7 @@ function App() {
       <nav className="bottom-nav" aria-label="App navigation">
         <button className={tab === 'snap' ? 'active' : ''} onClick={() => goTo('snap')} type="button"><Icon name="camera" size={21} /><span>Snap</span></button>
         <button className={tab === 'community' ? 'active' : ''} onClick={() => goTo('community')} type="button"><Icon name="community" size={21} /><span>Community</span></button>
-        <button className={tab === 'guide' ? 'active' : ''} onClick={() => goTo('guide')} type="button"><Icon name="guide" size={21} /><span>My Guide</span></button>
+        <button className={tab === 'guide' || tab === 'shared' ? 'active' : ''} onClick={() => goTo('guide')} type="button"><Icon name="guide" size={21} /><span>My Guide</span></button>
         <button className={tab === 'profile' ? 'active' : ''} onClick={() => goTo('profile')} type="button"><Icon name="profile" size={21} /><span>Profile</span></button>
       </nav>
     </main>
