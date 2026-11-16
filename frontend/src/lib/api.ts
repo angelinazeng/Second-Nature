@@ -77,6 +77,47 @@ export const markHelpful = (id: number, delta: 1 | -1) =>
 export const postReply = (id: number, author: string, text: string) =>
   request<Story>(`/api/stories/${id}/replies`, { method: 'POST', body: JSON.stringify({ author, text }) })
 
+export type QuestionReply = {
+  id: number
+  author: string
+  role: string
+  text: string
+  answer_key: ScanKey | null
+  helpful: number
+  created_at: number
+}
+
+export type Question = {
+  id: number
+  author: string
+  city: string
+  details: string
+  guess: ScanKey | null
+  photo: string | null
+  saved_reply_id: number | null
+  created_at: number
+  replies: QuestionReply[]
+  /** Neighbor replies that haven't arrived yet. */
+  pending: number
+}
+
+export const fetchQuestions = () => request<Question[]>('/api/questions')
+
+export const fetchQuestion = (id: number) => request<Question>(`/api/questions/${id}`)
+
+export function postQuestion(question: { author: string; city: string; details: string; guess?: ScanKey; photo?: string }) {
+  return request<Question>('/api/questions', { method: 'POST', body: JSON.stringify(question) })
+}
+
+export const postQuestionReply = (id: number, author: string, text: string) =>
+  request<Question>(`/api/questions/${id}/replies`, { method: 'POST', body: JSON.stringify({ author, text }) })
+
+export const markReplyHelpful = (id: number, replyId: number, delta: 1 | -1) =>
+  request<Question>(`/api/questions/${id}/replies/${replyId}/helpful`, { method: 'POST', body: JSON.stringify({ delta }) })
+
+export const saveAnswer = (id: number, replyId: number | null) =>
+  request<Question>(`/api/questions/${id}/saved`, { method: 'POST', body: JSON.stringify({ reply_id: replyId }) })
+
 export function guideLink(id: string) {
   return `${window.location.origin}${window.location.pathname}?guide=${encodeURIComponent(id)}`
 }

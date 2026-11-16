@@ -1,4 +1,4 @@
-"""SQLite storage for shared household guides and community stories/tips (Task 3)."""
+"""SQLite storage for shared household guides and community stories/tips (Task 3) and questions (Task 2)."""
 
 import json
 import secrets
@@ -36,6 +36,26 @@ CREATE TABLE IF NOT EXISTS replies (
     story_id INTEGER NOT NULL REFERENCES stories(id),
     author TEXT NOT NULL,
     text TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    author TEXT NOT NULL,
+    city TEXT NOT NULL,
+    details TEXT NOT NULL,
+    guess TEXT,
+    photo TEXT,
+    saved_reply_id INTEGER,
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS question_replies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id INTEGER NOT NULL REFERENCES questions(id),
+    author TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT '',
+    text TEXT NOT NULL,
+    answer_key TEXT,
+    helpful INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL
 );
 """
@@ -161,3 +181,82 @@ def add_reply(conn, story_id: int, author: str, text: str) -> dict | None:
         (story_id, author, text, time.time()),
     )
     return get_story(conn, story_id)
+
+
+# ---- Task 2: questions about items the app can't settle ----
+# Neighbor replies are inserted with a future created_at and stay hidden until then, so they
+# "arrive" a few seconds after the question is posted.
+
+def _question(conn, row) -> dict:
+    now = time.time()
+    replies = conn.execute(
+        "SELECT id, author, role, text, answer_key, helpful, created_at FROM question_replies"
+        " WHERE question_id = ? AND created_at <= ? ORDER BY created_at",
+        (row["id"], now),
+    ).fetchall()
+    pending = conn.execute(
+        "SELECT COUNT(*) FROM question_replies WHERE question_id = ? AND created_at > ?", (row["id"], now)
+    ).fetchone()[0]
+    return {
+        "id": row["id"],
+        "author": row["author"],
+        "city": row["city"],
+        "details": row["details"],
+        "guess": row["guess"],
+        "photo": row["photo"],
+        "saved_reply_id": row["saved_reply_id"],
+        "created_at": row["created_at"],
+        "replies": [dict(r) for r in replies],
+        "pending": pending,
+    }
+
+
+def list_questions(conn) -> list[dict]:
+    rows = conn.execute("SELECT * FROM questions ORDER BY created_at DESC").fetchall()
+    return [_question(conn, r) for r in rows]
+
+
+def get_question(conn, question_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
+    return _question(conn, row) if row else None
+
+
+def add_question(conn, author: str, city: str, details: str, guess: str | None, photo: str | None, seeded: list[dict]) -> dict:
+    now = time.time()
+    cur = conn.execute(
+        "INSERT INTO questions (author, city, details, guess, photo, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (author, city, details, guess, photo, now),
+    )
+    conn.executemany(
+        "INSERT INTO question_replies (question_id, author, role, text, answer_key, helpful, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [(cur.lastrowid, r["author"], r["role"], r["text"], r["answer_key"], r["helpful"], now + r["delay"]) for r in seeded],
+    )
+    return get_question(conn, cur.lastrowid)
+
+
+def add_question_reply(conn, question_id: int, author: str, text: str, answer_key: str | None) -> dict | None:
+    if not conn.execute("SELECT 1 FROM questions WHERE id = ?", (question_id,)).fetchone():
+        return None
+    conn.execute(
+        "INSERT INTO question_replies (question_id, author, text, answer_key, created_at) VALUES (?, ?, ?, ?, ?)",
+        (question_id, author, text, answer_key, time.time()),
+    )
+    return get_question(conn, question_id)
+
+
+def bump_reply_helpful(conn, question_id: int, reply_id: int, delta: int) -> dict | None:
+    conn.execute(
+        "UPDATE question_replies SET helpful = MAX(0, helpful + ?) WHERE id = ? AND question_id = ?",
+        (delta, reply_id, question_id),
+    )
+    return get_question(conn, question_id)
+
+
+def save_answer(conn, question_id: int, reply_id: int | None) -> dict | None:
+    """Marks which reply the asker saved to their guide (None clears it)."""
+    if reply_id is not None and not conn.execute(
+        "SELECT 1 FROM question_replies WHERE id = ? AND question_id = ? AND answer_key IS NOT NULL", (reply_id, question_id)
+    ).fetchone():
+        return None
+    conn.execute("UPDATE questions SET saved_reply_id = ? WHERE id = ?", (reply_id, question_id))
+    return get_question(conn, question_id)
